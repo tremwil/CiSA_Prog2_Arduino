@@ -1,4 +1,4 @@
-#ifndef _MENU_H
+#ifndef MENU_H
 #define MENU_H
 
 #include <LiquidCrystal.h>
@@ -12,6 +12,18 @@
 
 typedef void (*Action)();
 
+byte UP_DOWN_ARROW[8] =
+{
+    0b00100,
+    0b01010,
+    0b10001,
+    0b00000,
+    0b00000,
+    0b10001,
+    0b01010,
+    0b00100
+};
+
 class MenuPage
 {
 public:	
@@ -22,7 +34,7 @@ public:
 	MenuPage* children;	
 	
 	byte type;
-	int value;
+	int* valuePtr;
 	int defVal;
 
     // Create sub menu.
@@ -35,7 +47,7 @@ public:
 		this->children = children;
 		
 		this->type = MENU_SUBMENU;
-		this->value = 0;
+		this->valuePtr = NULL;
 		this->defVal = 0;
 	}
    
@@ -49,12 +61,26 @@ public:
         this->children = NULL;
         
         this->type = MENU_ACTION;
-        this->value = (int)action;
-        this->defVal = (int)action;
+        this->valuePtr = (int*)action;
+        this->defVal = 0;
+    }
+
+    // Create special menu (exit/action) without value.
+    MenuPage(const char* title, byte type)
+    {
+        this->title = title;
+        this->parent = NULL;
+      
+        this->nChild = 0;
+        this->children = NULL;
+        
+        this->type = type;
+        this->valuePtr = NULL;
+        this->defVal = 0;
     }
 
     // Create general menu.
-	MenuPage(const char* title, byte type, int val)
+	MenuPage(const char* title, byte type, int *valuePtr, int defVal)
 	{
 		this->title = title;
 		this->parent = NULL;
@@ -63,8 +89,8 @@ public:
 		this->children = NULL;
 		
 		this->type = type;
-		this->value = val;
-		this->defVal = val;
+		this->valuePtr = valuePtr;
+		this->defVal = defVal;
 	}
 
     // Go through menu tree and assign parents
@@ -95,7 +121,7 @@ public:
     // Return if the entire menu tree from this point is on default values.
     bool isTreeDefault()
     {
-        if (value != defVal) return false;
+        if (*valuePtr != defVal) return false;
 
         for (int i = 0; i < nChild; i++)
         {
@@ -108,7 +134,7 @@ public:
     // Reset the menu to its default value (and all sub... menus if recurse is true).
     void reset(bool recurse)
     {
-        if (!(type & MENU_READONLY)) value = defVal;
+        if ((MENU_BOOL | MENU_NUM) & type) *valuePtr = defVal;
 
         if (recurse)
         {
@@ -139,26 +165,30 @@ public:
     // Render current menu on the LCD.
     void render()
     {
+        lcd->createChar(0, UP_DOWN_ARROW);
         lcd->clear();
         lcd->setCursor(0,0);
-        lcd->print((currPage->parent == NULL) ? "  " : "^ ");
+        lcd->print((currPage->parent == NULL) ? "   " : "<< ");
         lcd->print(currPage->title);
 
         if (currPage->type & MENU_SUBMENU)
         {
             lcd->setCursor(0,1);
-            lcd->print("< ");
+            lcd->print(">>");
+            
+            lcd->setCursor(3, 1);
             lcd->print(currPage->children[subIndex].title);
+            
             lcd->setCursor(15, 1);
-            lcd->print(">");
+            lcd->write(byte(0));
         }
         else if (currPage->type & (MENU_NUM | MENU_BOOL))
         {
             lcd->setCursor(0,1);
-            if (currPage->type & MENU_NUM) lcd->print(currPage->value);
-            if (currPage->type & MENU_BOOL) lcd->print(currPage->value ? "True" : "False");
+            if (currPage->type & MENU_NUM) lcd->print(*currPage->valuePtr);
+            if (currPage->type & MENU_BOOL) lcd->print(*currPage->valuePtr ? "True" : "False");
 
-            if (currPage->value == currPage->defVal) lcd->print(" (def)");
+            if (*currPage->valuePtr == currPage->defVal) lcd->print(" (def)");
         }
     }
 
@@ -179,20 +209,17 @@ public:
 
             if (currPage->children[subIndex].type & MENU_ACTION)
             {
-               Action aptr = (Action)currPage->children[subIndex].value; aptr();
+               Action aptr = (Action)currPage->children[subIndex].valuePtr; aptr();
             }
             else
             {
                 currPage = &currPage->children[subIndex];
                 subIndex = 0;   
             }
-        }
-        if ((currPage->type & MENU_BOOL) && !(currPage->type & MENU_READONLY))
-        {
-            currPage->value = !currPage->value;
-        }
 
-        render();
+            render();
+        }
+        
         return false;
     }
 
@@ -225,12 +252,22 @@ public:
         }
     }
 
+    // Call when toggle button is pressed.
+    void onToggle()
+    {
+        if ((currPage->type & MENU_BOOL) && !(currPage->type & MENU_READONLY))
+        {
+            *currPage->valuePtr = !(*currPage->valuePtr);
+            render();
+        }
+    }
+
     // Call when delete button is pressed.
     void onDelete()
     {
         if ((currPage->type & MENU_NUM) && !(currPage->type & MENU_READONLY))
         {
-            currPage->value /= 10;
+            *currPage->valuePtr /= 10;
             render();
         }
     }
@@ -240,10 +277,10 @@ public:
     {
         if ((currPage->type & MENU_NUM) && !(currPage->type & MENU_READONLY))
         {
-            int new_val = 10*currPage->value + digit;
+            int new_val = 10*(*currPage->valuePtr) + digit;
             if (new_val < 0x8000) 
             {
-                currPage->value = new_val;
+                *currPage->valuePtr = new_val;
                 render();
             }
         }
